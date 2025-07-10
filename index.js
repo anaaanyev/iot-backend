@@ -2,29 +2,45 @@ import express from 'express';
 import mqtt from 'mqtt';
 import cors from 'cors';
 import fs from 'fs';
+import { MongoClient } from 'mongodb';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const USERS_FILE = './users.json';
+const client = new MongoClient(process.env.MONGODB_URI);
+const dbName = 'climateDB'; // Должно совпадать с названием в строке подключения
+
+// Загрузка пользователей из MongoDB
+async function loadUsers() {
+    try {
+        await client.connect();
+        const db = client.db(dbName);
+        const users = await db.collection('users').findOne({ _id: 'users' });
+        return users ? users.data : {};
+    } catch (err) {
+        console.error('Ошибка MongoDB:', err);
+        return {};
+    }
+}
+
+// Сохранение пользователей в MongoDB
+async function saveUsers(data) {
+    try {
+        await client.connect();
+        const db = client.db(dbName);
+        await db.collection('users').updateOne(
+            { _id: 'users' },
+            { $set: { data } },
+            { upsert: true }
+        );
+        console.log('✅ Данные сохранены в MongoDB');
+    } catch (err) {
+        console.error('❌ Ошибка MongoDB:', err);
+    }
+}
 
 // Список валидных устройств
 const VALID_DEVICES = ['climate01', 'climate02', 'climate03'];
-
-// Функции чтения и записи
-function loadUsers() {
-    if (!fs.existsSync(USERS_FILE)) return {};
-    return JSON.parse(fs.readFileSync(USERS_FILE, 'utf-8'));
-}
-
-function saveUsers(data) {
-    try {
-        fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2));
-        console.log('Файл users.json успешно обновлён');
-    } catch (err) {
-        console.error('Ошибка записи в файл:', err);
-    }
-}
 
 // MQTT настройки
 const mqttOptions = {
@@ -35,20 +51,20 @@ const mqttOptions = {
     protocol: 'mqtt'
 };
 
-const client = mqtt.connect(mqttOptions);
+const mqttClient = mqtt.connect(mqttOptions);
 
 // Последние данные от устройства
 let latestDataByDevice = {}; // device_id → данные
 
-client.on('connect', () => {
+mqttClient.on('connect', () => {
     console.log('🔌 MQTT connected');
     // Подписываемся на все устройства
     VALID_DEVICES.forEach(device => {
-        client.subscribe(`devices/${device}/data`);
+        mqttClient.subscribe(`devices/${device}/data`);
     });
 });
 
-client.on('message', (topic, message) => {
+mqttClient.on('message', (topic, message) => {
     if (topic.startsWith('devices/') && topic.endsWith('/data')) {
         const device_id = topic.split('/')[1];
         try {
@@ -144,7 +160,7 @@ app.post('/set-threshold', (req, res) => {
     }
 
     const topic = `devices/${device_id}/threshold`;
-    client.publish(topic, String(threshold));
+    mqttClient.publish(topic, String(threshold));
 
     console.log(`🌡️ Установлен порог ${threshold}°C для устройства ${device_id}`);
     res.json({ ok: true });
