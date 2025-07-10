@@ -8,6 +8,9 @@ const PORT = process.env.PORT || 3000;
 
 const USERS_FILE = './users.json';
 
+// Список валидных устройств
+const VALID_DEVICES = ['climate01', 'climate02', 'climate03'];
+
 // Функции чтения и записи
 function loadUsers() {
     if (!fs.existsSync(USERS_FILE)) return {};
@@ -17,16 +20,6 @@ function loadUsers() {
 function saveUsers(data) {
     fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2));
 }
-
-
-function getDeviceIdFromInit(initData) {
-    const userData = new URLSearchParams(initData);
-    const user_id = userData.get("user").match(/"id":(\d+)/)[1];
-
-    const users = loadUsers();
-    return users[user_id];
-}
-
 
 // MQTT настройки
 const mqttOptions = {
@@ -44,7 +37,10 @@ let latestDataByDevice = {}; // device_id → данные
 
 client.on('connect', () => {
     console.log('🔌 MQTT connected');
-    client.subscribe('devices/climate01/data');
+    // Подписываемся на все устройства
+    VALID_DEVICES.forEach(device => {
+        client.subscribe(`devices/${device}/data`);
+    });
 });
 
 client.on('message', (topic, message) => {
@@ -62,38 +58,112 @@ client.on('message', (topic, message) => {
 app.use(cors());
 app.use(express.json());
 
+// Маршрут регистрации
+app.post('/register', (req, res) => {
+    const { device_id, telegram_id, username, first_name, last_name } = req.body;
+
+    try {
+        // Проверка валидности устройства
+        if (!VALID_DEVICES.includes(device_id)) {
+            return res.status(400).json({ error: 'Неверный ID устройства' });
+        }
+
+        const users = loadUsers();
+
+        // Проверка - не занято ли уже это устройство
+        const existingUser = Object.keys(users).find(userId => users[userId].device_id === device_id);
+        if (existingUser && existingUser !== String(telegram_id)) {
+            return res.status(400).json({ error: 'Устройство уже привязано к другому пользователю' });
+        }
+
+        // Сохраняем данные пользователя
+        users[telegram_id] = {
+            device_id,
+            username,
+            first_name,
+            last_name,
+            registered_at: new Date().toISOString()
+        };
+
+        saveUsers(users);
+
+        console.log(`✅ Пользователь ${telegram_id} зарегистрирован для устройства ${device_id}`);
+        res.json({ ok: true, message: 'Регистрация успешна' });
+
+    } catch (err) {
+        console.error('Ошибка регистрации:', err);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// Проверка авторизации пользователя
+app.get('/check-auth', (req, res) => {
+    const { telegram_id } = req.query;
+
+    if (!telegram_id) {
+        return res.status(400).json({ error: 'Не указан telegram_id' });
+    }
+
+    const users = loadUsers();
+    const user = users[telegram_id];
+
+    if (user) {
+        res.json({ authorized: true, device_id: user.device_id });
+    } else {
+        res.json({ authorized: false });
+    }
+});
+
 // Получить последние данные
 app.get('/get-latest', (req, res) => {
-    const initData = req.query.initData;
-    const device_id = getDeviceIdFromInit(initData);
-    res.json(latestDataByDevice[device_id] || {});
+    const { device_id } = req.query;
+
+    if (!device_id) {
+        return res.status(400).json({ error: 'Не указан device_id' });
+    }
+
+    const data = latestDataByDevice[device_id] || {};
+    res.json(data);
 });
 
 // Установить порог температуры
 app.post('/set-threshold', (req, res) => {
-    const { threshold, initData } = req.body;
-    const device_id = getDeviceIdFromInit(initData);
+    const { threshold, device_id } = req.body;
+
+    if (!device_id) {
+        return res.status(400).json({ error: 'Не указан device_id' });
+    }
+
+    if (!VALID_DEVICES.includes(device_id)) {
+        return res.status(400).json({ error: 'Неверный device_id' });
+    }
 
     const topic = `devices/${device_id}/threshold`;
     client.publish(topic, String(threshold));
+
+    console.log(`🌡️ Установлен порог ${threshold}°C для устройства ${device_id}`);
     res.json({ ok: true });
 });
 
-// Маршрут регистрации
-app.post('/register', (req, res) => {
-    const { initData, device_id } = req.body;
+// Отвязать устройство от пользователя
+app.post('/unregister', (req, res) => {
+    const { telegram_id } = req.body;
 
-    try {
-        const userData = new URLSearchParams(initData);
-        const user_id = userData.get("user").match(/"id":(\d+)/)[1];
+    if (!telegram_id) {
+        return res.status(400).json({ error: 'Не указан telegram_id' });
+    }
 
-        const users = loadUsers();
-        users[user_id] = device_id;
+    const users = loadUsers();
+
+    if (users[telegram_id]) {
+        const device_id = users[telegram_id].device_id;
+        delete users[telegram_id];
         saveUsers(users);
 
-        res.json({ ok: true });
-    } catch (err) {
-        res.status(400).json({ error: "Invalid initData" });
+        console.log(`🔓 Пользователь ${telegram_id} отвязан от устройства ${device_id}`);
+        res.json({ ok: true, message: 'Устройство отвязано' });
+    } else {
+        res.status(404).json({ error: 'Пользователь не найден' });
     }
 });
 
