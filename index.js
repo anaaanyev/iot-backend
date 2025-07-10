@@ -18,7 +18,12 @@ function loadUsers() {
 }
 
 function saveUsers(data) {
-    fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2));
+    try {
+        fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2));
+        console.log('Файл users.json успешно обновлён');
+    } catch (err) {
+        console.error('Ошибка записи в файл:', err);
+    }
 }
 
 // MQTT настройки
