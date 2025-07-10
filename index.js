@@ -1,9 +1,32 @@
 import express from 'express';
 import mqtt from 'mqtt';
 import cors from 'cors';
+import fs from 'fs';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+const USERS_FILE = './users.json';
+
+// Функции чтения и записи
+function loadUsers() {
+    if (!fs.existsSync(USERS_FILE)) return {};
+    return JSON.parse(fs.readFileSync(USERS_FILE, 'utf-8'));
+}
+
+function saveUsers(data) {
+    fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2));
+}
+
+
+function getDeviceIdFromInit(initData) {
+    const userData = new URLSearchParams(initData);
+    const user_id = userData.get("user").match(/"id":(\d+)/)[1];
+
+    const users = loadUsers();
+    return users[user_id];
+}
+
 
 // MQTT настройки
 const mqttOptions = {
@@ -17,12 +40,7 @@ const mqttOptions = {
 const client = mqtt.connect(mqttOptions);
 
 // Последние данные от устройства
-let latestData = {
-    temperature: null,
-    humidity: null,
-    threshold: null,
-    timestamp: null
-};
+let latestDataByDevice = {}; // device_id → данные
 
 client.on('connect', () => {
     console.log('🔌 MQTT connected');
@@ -30,10 +48,11 @@ client.on('connect', () => {
 });
 
 client.on('message', (topic, message) => {
-    if (topic === 'devices/climate01/data') {
+    if (topic.startsWith('devices/') && topic.endsWith('/data')) {
+        const device_id = topic.split('/')[1];
         try {
             const payload = JSON.parse(message.toString());
-            latestData = { ...payload, timestamp: new Date() };
+            latestDataByDevice[device_id] = { ...payload, timestamp: new Date() };
         } catch (e) {
             console.error('Ошибка парсинга MQTT:', e);
         }
@@ -45,18 +64,36 @@ app.use(express.json());
 
 // Получить последние данные
 app.get('/get-latest', (req, res) => {
-    res.json(latestData);
+    const initData = req.query.initData;
+    const device_id = getDeviceIdFromInit(initData);
+    res.json(latestDataByDevice[device_id] || {});
 });
 
 // Установить порог температуры
 app.post('/set-threshold', (req, res) => {
-    const { threshold } = req.body;
-    if (typeof threshold === 'number') {
-        const topic = 'devices/climate01/threshold';
-        client.publish(topic, String(threshold));
+    const { threshold, initData } = req.body;
+    const device_id = getDeviceIdFromInit(initData);
+
+    const topic = `devices/${device_id}/threshold`;
+    client.publish(topic, String(threshold));
+    res.json({ ok: true });
+});
+
+// Маршрут регистрации
+app.post('/register', (req, res) => {
+    const { initData, device_id } = req.body;
+
+    try {
+        const userData = new URLSearchParams(initData);
+        const user_id = userData.get("user").match(/"id":(\d+)/)[1];
+
+        const users = loadUsers();
+        users[user_id] = device_id;
+        saveUsers(users);
+
         res.json({ ok: true });
-    } else {
-        res.status(400).json({ error: 'Invalid threshold' });
+    } catch (err) {
+        res.status(400).json({ error: "Invalid initData" });
     }
 });
 
