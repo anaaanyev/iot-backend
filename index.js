@@ -80,7 +80,7 @@ app.use(cors());
 app.use(express.json());
 
 // Маршрут регистрации
-app.post('/register', (req, res) => {
+app.post('/register', async (req, res) => {
     const { device_id, telegram_id, username, first_name, last_name } = req.body;
 
     try {
@@ -89,7 +89,7 @@ app.post('/register', (req, res) => {
             return res.status(400).json({ error: 'Неверный ID устройства' });
         }
 
-        const users = loadUsers();
+        const users = await loadUsers(); // ИСПРАВЛЕНО: добавлен await
 
         // Проверка - не занято ли уже это устройство
         const existingUser = Object.keys(users).find(userId => users[userId].device_id === device_id);
@@ -106,7 +106,7 @@ app.post('/register', (req, res) => {
             registered_at: new Date().toISOString()
         };
 
-        saveUsers(users);
+        await saveUsers(users); // ИСПРАВЛЕНО: добавлен await
 
         console.log(`✅ Пользователь ${telegram_id} зарегистрирован для устройства ${device_id}`);
         res.json({ ok: true, message: 'Регистрация успешна' });
@@ -118,20 +118,25 @@ app.post('/register', (req, res) => {
 });
 
 // Проверка авторизации пользователя
-app.get('/check-auth', (req, res) => {
+app.get('/check-auth', async (req, res) => {
     const { telegram_id } = req.query;
 
     if (!telegram_id) {
         return res.status(400).json({ error: 'Не указан telegram_id' });
     }
 
-    const users = loadUsers();
-    const user = users[telegram_id];
+    try {
+        const users = await loadUsers(); // ИСПРАВЛЕНО: добавлен await и try/catch
+        const user = users[telegram_id];
 
-    if (user) {
-        res.json({ authorized: true, device_id: user.device_id });
-    } else {
-        res.json({ authorized: false });
+        if (user) {
+            res.json({ authorized: true, device_id: user.device_id });
+        } else {
+            res.json({ authorized: false });
+        }
+    } catch (err) {
+        console.error('Ошибка проверки авторизации:', err);
+        res.status(500).json({ error: 'Ошибка сервера' });
     }
 });
 
@@ -167,24 +172,29 @@ app.post('/set-threshold', (req, res) => {
 });
 
 // Отвязать устройство от пользователя
-app.post('/unregister', (req, res) => {
+app.post('/unregister', async (req, res) => {
     const { telegram_id } = req.body;
 
     if (!telegram_id) {
         return res.status(400).json({ error: 'Не указан telegram_id' });
     }
 
-    const users = loadUsers();
+    try {
+        const users = await loadUsers(); // ИСПРАВЛЕНО: добавлен await
 
-    if (users[telegram_id]) {
-        const device_id = users[telegram_id].device_id;
-        delete users[telegram_id];
-        saveUsers(users);
+        if (users[telegram_id]) {
+            const device_id = users[telegram_id].device_id;
+            delete users[telegram_id];
+            await saveUsers(users); // ИСПРАВЛЕНО: добавлен await
 
-        console.log(`🔓 Пользователь ${telegram_id} отвязан от устройства ${device_id}`);
-        res.json({ ok: true, message: 'Устройство отвязано' });
-    } else {
-        res.status(404).json({ error: 'Пользователь не найден' });
+            console.log(`🔓 Пользователь ${telegram_id} отвязан от устройства ${device_id}`);
+            res.json({ ok: true, message: 'Устройство отвязано' });
+        } else {
+            res.status(404).json({ error: 'Пользователь не найден' });
+        }
+    } catch (err) {
+        console.error('Ошибка отвязки:', err);
+        res.status(500).json({ error: 'Ошибка сервера' });
     }
 });
 
