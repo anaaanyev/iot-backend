@@ -79,6 +79,10 @@ mqttClient.on('message', (topic, message) => {
 app.use(cors());
 app.use(express.json());
 
+app.get('/ping', (req, res) => {
+    res.json({ status: 'alive', timestamp: new Date() });
+});
+
 // Маршрут регистрации
 app.post('/register', async (req, res) => {
     const { device_id, telegram_id, username, first_name, last_name } = req.body;
