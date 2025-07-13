@@ -80,6 +80,7 @@ app.use(cors());
 app.use(express.json());
 
 app.get('/ping', (req, res) => {
+    console.log('🔄 Ping received at', new Date());
     res.json({ status: 'alive', timestamp: new Date() });
 });
 
