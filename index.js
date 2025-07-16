@@ -362,17 +362,31 @@ const requireAuth = (req, res, next) => {
 
 
 // 4.2 Middleware для валидации устройств
+// 4.2 Middleware для валидации устройств
 const validateDevice = (req, res, next) => {
-    const { device_id } = req.body || req.params;
+    // Ищем device_id в разных местах в зависимости от типа запроса
+    const device_id = req.params.device_id || req.body?.device_id || req.query?.device_id;
+
+    console.log('📡 [VALIDATE_DEVICE] Поиск device_id:', {
+        method: req.method,
+        url: req.url,
+        params: req.params,
+        body: req.body,
+        query: req.query,
+        found_device_id: device_id
+    });
 
     if (!device_id) {
+        console.log('❌ [VALIDATE_DEVICE] device_id не найден');
         return res.status(400).json({ error: 'Не указан device_id' });
     }
 
     if (!DeviceService.isValidDevice(device_id)) {
+        console.log('❌ [VALIDATE_DEVICE] Неверный device_id:', device_id);
         return res.status(400).json({ error: 'Неверный ID устройства' });
     }
 
+    console.log('✅ [VALIDATE_DEVICE] device_id валиден:', device_id);
     req.deviceId = device_id;
     req.deviceType = DeviceService.getDeviceType(device_id);
     next();
