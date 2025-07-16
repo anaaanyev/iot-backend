@@ -474,11 +474,13 @@ app.get('/api/auth/check', requireAuth, async (req, res) => {
 
 // 5.3 Управление конкретными устройствами
 app.get('/api/devices/:device_id/data', requireAuth, validateDevice, requireDeviceOwnership, (req, res) => {
-    console.log('Request for device data:', {
+    console.log('Запрос данных устройства:', {
         deviceId: req.deviceId,
         telegramId: req.telegramId,
-        latestData: mqttManager.latestData
+        userAgent: req.headers['user-agent'],
+        ip: req.ip
     });
+
     const data = mqttManager.getLatestData(req.deviceId);
     res.json(data);
 });
