@@ -346,12 +346,19 @@ class DeviceTypeHandler {
 // 4.1 Middleware для проверки авторизации
 const requireAuth = (req, res, next) => {
     const telegramId = req.body?.telegram_id || req.query?.telegram_id;
+
+    console.log('📡 [AUTH] Получен telegram_id:', telegramId);
+    console.log('📦 req.body =', req.body);
+    console.log('📦 req.query =', req.query);
+
     if (!telegramId) {
         return res.status(401).json({ error: 'Требуется авторизация' });
     }
+
     req.telegramId = telegramId;
     next();
 };
+
 
 // 4.2 Middleware для валидации устройств
 const validateDevice = (req, res, next) => {
