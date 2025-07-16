@@ -84,7 +84,8 @@ class UserService {
         try {
             await client.connect();
             const db = client.db(dbName);
-            const user = await db.collection('users').findOne({ _id: telegramId });
+            const numericId = typeof telegramId === 'string' ? parseInt(telegramId, 10) : telegramId;
+            const user = await db.collection('users').findOne({ _id: numericId });
             return user;
         } catch (err) {
             console.error('Ошибка получения пользователя:', err);
