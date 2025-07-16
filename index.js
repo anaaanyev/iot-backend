@@ -449,6 +449,7 @@ app.get('/api/auth/check', requireAuth, async (req, res) => {
 
         if (user && user.devices && user.devices.length > 0) {
             const groupedDevices = UserService.groupDevicesByType(user.devices);
+            console.log("Grouped Devices = ", JSON.stringify(groupedDevices, null, 2));
             res.json({
                 authorized: true,
                 devices: groupedDevices,
@@ -587,6 +588,7 @@ app.get('/check-auth', requireAuth, async (req, res) => {
 
         if (user && user.devices && user.devices.length > 0) {
             const groupedDevices = UserService.groupDevicesByType(user.devices);
+            console.log("Grouped Devices = ", JSON.stringify(groupedDevices, null, 2));
             res.json({
                 authorized: true,
                 devices: groupedDevices,
