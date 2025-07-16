@@ -14,6 +14,20 @@ const PORT = process.env.PORT || 3000;
 const client = new MongoClient(process.env.MONGODB_URI);
 const dbName = 'iotHubDB';
 
+async function connectToMongoDB() {
+    try {
+        await client.connect();
+        console.log('🗄️ MongoDB подключена');
+    } catch (err) {
+        console.error('Ошибка подключения к MongoDB:', err);
+        // Повторная попытка через 5 секунд
+        setTimeout(connectToMongoDB, 5000);
+    }
+}
+
+// Инициализировать подключение при запуске
+connectToMongoDB();
+
 // 1.2 Конфигурация типов устройств
 const DEVICE_TYPES = {
     climate: {
@@ -68,9 +82,7 @@ const VALID_DEVICES = {
 class UserService {
     static async getUser(telegramId) {
         try {
-            if (!client.isConnected()) {
-                await client.connect();
-            }
+            await client.connect();
             const db = client.db(dbName);
             const user = await db.collection('users').findOne({ _id: telegramId });
             return user;
