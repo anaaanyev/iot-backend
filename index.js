@@ -2,8 +2,11 @@ import express from 'express';
 import mqtt from 'mqtt';
 import cors from 'cors';
 import { MongoClient } from 'mongodb';
+import { WebSocketServer } from 'ws';
+import { createServer } from 'http';
 
 const app = express();
+const server = createServer(app);
 const PORT = process.env.PORT || 3000;
 
 // ============================================================================
@@ -24,7 +27,6 @@ async function connectToMongoDB() {
         setTimeout(connectToMongoDB, 5000);
     }
 }
-
 // Инициализировать подключение при запуске
 connectToMongoDB();
 
@@ -257,6 +259,11 @@ class MQTTDeviceManager {
         this.deviceHandlers = new Map();
         this.setupConnection();
         this.registerDeviceTypes();
+        this.wsManager = null;
+    }
+
+    setWebSocketManager(wsManager) {
+        this.wsManager = wsManager;
     }
 
     setupConnection() {
@@ -295,11 +302,20 @@ class MQTTDeviceManager {
 
         try {
             const payload = JSON.parse(message.toString());
-            this.latestData.set(deviceId, {
+            const deviceData = {
                 ...payload,
-                timestamp: new Date(),
+                timestamp: new Date().toISOString(),
                 device_id: deviceId
-            });
+            };
+
+            this.latestData.set(deviceId, deviceData);
+
+            console.log(`📡 Получены данные от ${deviceId}:`, payload);
+
+            // Отправляем обновления через WebSocket
+            if (this.wsManager) {
+                this.wsManager.broadcastDeviceUpdate(deviceId, deviceData);
+            }
         } catch (e) {
             console.error('Ошибка парсинга MQTT:', e);
         }
@@ -347,6 +363,150 @@ class MQTTDeviceManager {
     }
 }
 
+class WebSocketManager {
+    constructor() {
+        this.wss = new WebSocketServer({ server });
+        this.connections = new Map(); // telegramId -> Set of WebSocket connections
+        this.setupWebSocketServer();
+    }
+
+    setupWebSocketServer() {
+        this.wss.on('connection', (ws, req) => {
+            console.log('🔌 Новое WebSocket соединение');
+
+            // Обработка сообщений от клиента
+            ws.on('message', (message) => {
+                try {
+                    const data = JSON.parse(message);
+                    this.handleClientMessage(ws, data);
+                } catch (error) {
+                    console.error('Ошибка парсинга WebSocket сообщения:', error);
+                }
+            });
+
+            // Обработка закрытия соединения
+            ws.on('close', () => {
+                console.log('📤 WebSocket соединение закрыто');
+                this.removeConnection(ws);
+            });
+
+            // Обработка ошибок
+            ws.on('error', (error) => {
+                console.error('WebSocket ошибка:', error);
+                this.removeConnection(ws);
+            });
+        });
+    }
+
+    handleClientMessage(ws, data) {
+        switch (data.type) {
+            case 'auth':
+                this.authenticateConnection(ws, data.telegram_id);
+                break;
+            case 'ping':
+                ws.send(JSON.stringify({ type: 'pong' }));
+                break;
+            default:
+                console.log('Неизвестное сообщение WebSocket:', data);
+        }
+    }
+
+    authenticateConnection(ws, telegramId) {
+        if (!telegramId) {
+            ws.send(JSON.stringify({
+                type: 'error',
+                message: 'Требуется telegram_id для авторизации'
+            }));
+            return;
+        }
+
+        // Добавляем соединение в пул
+        if (!this.connections.has(telegramId)) {
+            this.connections.set(telegramId, new Set());
+        }
+
+        this.connections.get(telegramId).add(ws);
+        ws.telegramId = telegramId;
+
+        console.log(`✅ WebSocket авторизован для пользователя ${telegramId}`);
+
+        // Отправляем подтверждение авторизации
+        ws.send(JSON.stringify({
+            type: 'auth_success',
+            telegram_id: telegramId
+        }));
+    }
+
+    removeConnection(ws) {
+        if (ws.telegramId) {
+            const userConnections = this.connections.get(ws.telegramId);
+            if (userConnections) {
+                userConnections.delete(ws);
+                if (userConnections.size === 0) {
+                    this.connections.delete(ws.telegramId);
+                }
+            }
+        }
+    }
+
+    // Отправка обновлений статуса устройства пользователю
+    sendDeviceUpdate(telegramId, deviceId, data) {
+        const userConnections = this.connections.get(telegramId);
+        if (!userConnections) return;
+
+        const message = JSON.stringify({
+            type: 'device_update',
+            device_id: deviceId,
+            data: data,
+            timestamp: new Date().toISOString()
+        });
+
+        userConnections.forEach(ws => {
+            if (ws.readyState === ws.OPEN) {
+                ws.send(message);
+            }
+        });
+    }
+
+    // Отправка обновлений всем пользователям устройства
+    async broadcastDeviceUpdate(deviceId, data) {
+        try {
+            // Находим всех пользователей, у которых есть это устройство
+            const db = client.db(dbName);
+            const users = await db.collection('users')
+                .find({ "devices.device_id": deviceId })
+                .toArray();
+
+            // Отправляем обновления всем найденным пользователям
+            users.forEach(user => {
+                this.sendDeviceUpdate(user._id, deviceId, data);
+            });
+
+            console.log(`📡 Обновления для устройства ${deviceId} отправлены ${users.length} пользователям`);
+        } catch (error) {
+            console.error('Ошибка при отправке обновлений:', error);
+        }
+    }
+
+    // Отправка системных уведомлений
+    sendSystemNotification(telegramId, message) {
+        const userConnections = this.connections.get(telegramId);
+        if (!userConnections) return;
+
+        const notification = JSON.stringify({
+            type: 'notification',
+            message: message,
+            timestamp: new Date().toISOString()
+        });
+
+        userConnections.forEach(ws => {
+            if (ws.readyState === ws.OPEN) {
+                ws.send(notification);
+            }
+        });
+    }
+}
+
 // 3.3 Handler для типов устройств
 class DeviceTypeHandler {
     constructor(deviceType) {
@@ -378,8 +538,6 @@ const requireAuth = (req, res, next) => {
     next();
 };
 
-
-// 4.2 Middleware для валидации устройств
 // 4.2 Middleware для валидации устройств
 const validateDevice = (req, res, next) => {
     // Ищем device_id в разных местах в зависимости от типа запроса
@@ -425,16 +583,30 @@ const requireDeviceOwnership = async (req, res, next) => {
 
 // Инициализация MQTT менеджера
 const mqttManager = new MQTTDeviceManager();
+const wsManager = new WebSocketManager();
+
+// Связываем менеджеры
+mqttManager.setWebSocketManager(wsManager);
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 
 // 5.1 Системные endpoints
+
 // app.get('/ping', (req, res) => {
 //     console.log('🔄 Ping received at', new Date());
 //     res.json({ status: 'alive', timestamp: new Date() });
 // });
+
+// endpoint для WebSocket информации:
+app.get('/api/websocket/info', (req, res) => {
+    res.json({
+        connected_users: wsManager.connections.size,
+        total_connections: Array.from(wsManager.connections.values())
+            .reduce((total, userConnections) => total + userConnections.size, 0)
+    });
+});
 
 app.get('/api/devices/types', (req, res) => {
     res.json(DEVICE_TYPES);
@@ -446,7 +618,6 @@ app.post('/api/auth/register-device', requireAuth, validateDevice, async (req, r
     const telegramId = req.telegramId;
 
     try {
-        // Проверяем, не занято ли устройство
         const existingUsers = await client.db(dbName).collection('users')
             .find({ "devices.device_id": device_id }).toArray();
 
@@ -455,19 +626,25 @@ app.post('/api/auth/register-device', requireAuth, validateDevice, async (req, r
             return res.status(400).json({ error: 'Устройство уже привязано к другому пользователю' });
         }
 
-        // Проверяем, не добавлено ли уже это устройство текущим пользователем
         const user = await UserService.getUser(telegramId);
         if (user && user.devices && user.devices.some(d => d.device_id === device_id)) {
             return res.status(400).json({ error: 'Устройство уже добавлено' });
         }
 
-        // Добавляем устройство
         const result = await UserService.addDevice(telegramId, device_id, {
             username, first_name, last_name
         });
 
         if (result.success) {
             console.log(`✅ Устройство ${device_id} добавлено пользователю ${telegramId}`);
+
+            // Отправляем WebSocket уведомление о добавлении устройства
+            wsManager.sendSystemNotification(telegramId, {
+                type: 'device_added',
+                device_id: device_id,
+                device_name: result.device.custom_name
+            });
+
             res.json({
                 success: true,
                 message: 'Устройство успешно добавлено',
@@ -583,118 +760,14 @@ app.post('/api/auth/unregister-device', requireAuth, validateDevice, requireDevi
     }
 });
 
-// ============================================================================
-// ФАЗА 6: LEGACY ENDPOINTS (для совместимости)
-// ============================================================================
-
-// 6.1 Поддержка старых endpoints (временно)
-app.post('/register', requireAuth, validateDevice, async (req, res) => {
-    console.log('⚠️  Используется устаревший endpoint /register');
-    const { device_id, username, first_name, last_name } = req.body;
-    const telegramId = req.telegramId;
-
-    try {
-        const existingUsers = await client.db(dbName).collection('users')
-            .find({ "devices.device_id": device_id }).toArray();
-
-        const occupiedBy = existingUsers.find(user => user._id !== telegramId);
-        if (occupiedBy) {
-            return res.status(400).json({ error: 'Устройство уже привязано к другому пользователю' });
-        }
-
-        const user = await UserService.getUser(telegramId);
-        if (user && user.devices && user.devices.some(d => d.device_id === device_id)) {
-            return res.status(400).json({ error: 'Устройство уже добавлено' });
-        }
-
-        const result = await UserService.addDevice(telegramId, device_id, {
-            username, first_name, last_name
-        });
-
-        if (result.success) {
-            console.log(`✅ Устройство ${device_id} добавлено пользователю ${telegramId}`);
-            res.json({
-                success: true,
-                message: 'Устройство успешно добавлено',
-                device: result.device
-            });
-        } else {
-            res.status(500).json({ error: result.error });
-        }
-
-    } catch (err) {
-        console.error('Ошибка регистрации устройства:', err);
-        res.status(500).json({ error: 'Ошибка сервера' });
-    }
-});
-
-app.get('/check-auth', requireAuth, async (req, res) => {
-    console.log('⚠️  Используется устаревший endpoint /check-auth');
-    try {
-        const user = await UserService.getUser(req.telegramId);
-
-        if (user && user.devices && user.devices.length > 0) {
-            const groupedDevices = UserService.groupDevicesByType(user.devices);
-            console.log("Grouped Devices = ", JSON.stringify(groupedDevices, null, 2));
-            res.json({
-                authorized: true,
-                devices: groupedDevices,
-                total_devices: user.devices.length
-            });
-        } else {
-            res.json({ authorized: false });
-        }
-    } catch (err) {
-        console.error('Ошибка проверки авторизации:', err);
-        res.status(500).json({ error: 'Ошибка сервера' });
-    }
-});
-
-// 6.2 Временные endpoints для совместимости с старым фронтендом
-app.get('/get-latest', (req, res) => {
-    console.log('⚠️  Используется устаревший endpoint /get-latest');
-    const { device_id } = req.query;
-    if (!device_id) {
-        return res.status(400).json({ error: 'Не указан device_id' });
-    }
-    const data = mqttManager.getLatestData(device_id);
-    res.json(data);
-});
-
-app.post('/set-threshold', (req, res) => {
-    console.log('⚠️  Используется устаревший endpoint /set-threshold');
-    const { threshold, device_id } = req.body;
-
-    if (!device_id || !VALID_DEVICES[device_id]) {
-        return res.status(400).json({ error: 'Неверный device_id' });
-    }
-
-    // ДОБАВИТЬ ВАЛИДАЦИЮ:
-    if (threshold === undefined || threshold === null || isNaN(threshold)) {
-        return res.status(400).json({ error: 'Неверное значение порога' });
-    }
-
-    const numericThreshold = Number(threshold);
-    if (numericThreshold < 0 || numericThreshold > 40) {
-        return res.status(400).json({ error: 'Порог должен быть между 0 и 40' });
-    }
-
-    const success = mqttManager.publishCommand(device_id, 'threshold', numericThreshold);
-
-    if (success) {
-        console.log(`🌡️ Установлен порог ${numericThreshold}°C для устройства ${device_id}`);
-        res.json({ ok: true });
-    } else {
-        res.status(500).json({ error: 'Ошибка отправки команды' });
-    }
-});
 
 // ============================================================================
 // ЗАПУСК СЕРВЕРА
 // ============================================================================
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`🚀 IoT Hub Server running on port ${PORT}`);
+    console.log(`🔌 WebSocket сервер запущен`);
     console.log(`📱 Поддерживаемые типы устройств: ${Object.keys(DEVICE_TYPES).join(', ')}`);
     console.log(`🔧 Доступные устройства: ${Object.keys(VALID_DEVICES).length}`);
 });
