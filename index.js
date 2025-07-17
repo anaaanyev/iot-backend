@@ -372,7 +372,7 @@ class WebSocketManager {
 
     setupWebSocketServer() {
         this.wss.on('connection', (ws, req) => {
-            console.log('🔌 Новое WebSocket соединение');
+            // console.log('🔌 Новое WebSocket соединение');
 
             // Обработка сообщений от клиента
             ws.on('message', (message) => {
@@ -386,7 +386,7 @@ class WebSocketManager {
 
             // Обработка закрытия соединения
             ws.on('close', () => {
-                console.log('📤 WebSocket соединение закрыто');
+                // console.log('📤 WebSocket соединение закрыто');
                 this.removeConnection(ws);
             });
 
@@ -428,7 +428,7 @@ class WebSocketManager {
         this.connections.get(telegramId).add(ws);
         ws.telegramId = telegramId;
 
-        console.log(`✅ WebSocket авторизован для пользователя ${telegramId}`);
+        // console.log(`✅ WebSocket авторизован для пользователя ${telegramId}`);
 
         // Отправляем подтверждение авторизации
         ws.send(JSON.stringify({
@@ -683,12 +683,12 @@ app.get('/api/auth/check', requireAuth, async (req, res) => {
 
 // 5.3 Управление конкретными устройствами
 app.get('/api/devices/:device_id/data', requireAuth, validateDevice, requireDeviceOwnership, (req, res) => {
-    console.log('Запрос данных устройства:', {
-        deviceId: req.deviceId,
-        telegramId: req.telegramId,
-        userAgent: req.headers['user-agent'],
-        ip: req.ip
-    });
+    // console.log('Запрос данных устройства:', {
+    //     deviceId: req.deviceId,
+    //     telegramId: req.telegramId,
+    //     userAgent: req.headers['user-agent'],
+    //     ip: req.ip
+    // });
 
     const data = mqttManager.getLatestData(req.deviceId);
     res.json(data);
