@@ -310,7 +310,7 @@ class MQTTDeviceManager {
 
             this.latestData.set(deviceId, deviceData);
 
-            console.log(`📡 Получены данные от ${deviceId}:`, payload);
+            // console.log(`📡 Получены данные от ${deviceId}:`, payload);
 
             // Отправляем обновления через WebSocket
             if (this.wsManager) {
@@ -356,7 +356,7 @@ class MQTTDeviceManager {
                 device_id: deviceId
             });
 
-            console.log(`📡 Получены данные от ${deviceId}:`, payload);
+            // console.log(`📡 Получены данные от ${deviceId}:`, payload);
         } catch (e) {
             console.error('Ошибка парсинга MQTT:', e);
         }
