@@ -327,6 +327,24 @@ class MQTTDeviceManager {
         this.client.publish(topic, String(data));
         return true;
     }
+
+    handleMessage(topic, message) {
+        const deviceId = this.extractDeviceId(topic);
+        if (!deviceId) return;
+
+        try {
+            const payload = JSON.parse(message.toString());
+            this.latestData.set(deviceId, {
+                ...payload,
+                timestamp: new Date().toISOString(), // Всегда используем ISO формат
+                device_id: deviceId
+            });
+
+            console.log(`📡 Получены данные от ${deviceId}:`, payload);
+        } catch (e) {
+            console.error('Ошибка парсинга MQTT:', e);
+        }
+    }
 }
 
 // 3.3 Handler для типов устройств
