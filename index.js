@@ -367,14 +367,14 @@ const validateDevice = (req, res, next) => {
     // Ищем device_id в разных местах в зависимости от типа запроса
     const device_id = req.params.device_id || req.body?.device_id || req.query?.device_id;
 
-    console.log('📡 [VALIDATE_DEVICE] Поиск device_id:', {
-        method: req.method,
-        url: req.url,
-        params: req.params,
-        body: req.body,
-        query: req.query,
-        found_device_id: device_id
-    });
+    // console.log('📡 [VALIDATE_DEVICE] Поиск device_id:', {
+    //     method: req.method,
+    //     url: req.url,
+    //     params: req.params,
+    //     body: req.body,
+    //     query: req.query,
+    //     found_device_id: device_id
+    // });
 
     if (!device_id) {
         console.log('❌ [VALIDATE_DEVICE] device_id не найден');
@@ -386,7 +386,7 @@ const validateDevice = (req, res, next) => {
         return res.status(400).json({ error: 'Неверный ID устройства' });
     }
 
-    console.log('✅ [VALIDATE_DEVICE] device_id валиден:', device_id);
+    // console.log('✅ [VALIDATE_DEVICE] device_id валиден:', device_id);
     req.deviceId = device_id;
     req.deviceType = DeviceService.getDeviceType(device_id);
     next();
@@ -471,7 +471,7 @@ app.get('/api/auth/check', requireAuth, async (req, res) => {
 
         if (user && user.devices && user.devices.length > 0) {
             const groupedDevices = UserService.groupDevicesByType(user.devices);
-            console.log("Grouped Devices = ", JSON.stringify(groupedDevices, null, 2));
+            // console.log("Grouped Devices = ", JSON.stringify(groupedDevices, null, 2));
             res.json({
                 authorized: true,
                 devices: groupedDevices,
