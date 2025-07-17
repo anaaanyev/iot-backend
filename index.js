@@ -413,10 +413,10 @@ app.use(cors());
 app.use(express.json());
 
 // 5.1 Системные endpoints
-app.get('/ping', (req, res) => {
-    console.log('🔄 Ping received at', new Date());
-    res.json({ status: 'alive', timestamp: new Date() });
-});
+// app.get('/ping', (req, res) => {
+//     console.log('🔄 Ping received at', new Date());
+//     res.json({ status: 'alive', timestamp: new Date() });
+// });
 
 app.get('/api/devices/types', (req, res) => {
     res.json(DEVICE_TYPES);
