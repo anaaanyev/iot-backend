@@ -238,6 +238,31 @@ class DeviceService {
     }
 }
 
+// Кеширование данных устройств
+class CacheManager {
+    constructor() {
+        this.deviceDataCache = new Map(); // deviceId -> {data, timestamp}
+        this.cacheTTL = 30000; // 30 секунд
+    }
+
+    set(deviceId, data) {
+        this.deviceDataCache.set(deviceId, {
+            data,
+            timestamp: Date.now()
+        });
+    }
+
+    get(deviceId) {
+        const cached = this.deviceDataCache.get(deviceId);
+        if (!cached) return null;
+        if (Date.now() - cached.timestamp > this.cacheTTL) {
+            this.deviceDataCache.delete(deviceId);
+            return null;
+        }
+        return cached.data;
+    }
+}
+
 // ============================================================================
 // ФАЗА 3: MQTT СИСТЕМА
 // ============================================================================
@@ -260,6 +285,7 @@ class MQTTDeviceManager {
         this.setupConnection();
         this.registerDeviceTypes();
         this.wsManager = null;
+        this.cache = new CacheManager();
     }
 
     setWebSocketManager(wsManager) {
@@ -309,10 +335,8 @@ class MQTTDeviceManager {
             };
 
             this.latestData.set(deviceId, deviceData);
+            this.cache.set(deviceId, deviceData);
 
-            // console.log(`📡 Получены данные от ${deviceId}:`, payload);
-
-            // Отправляем обновления через WebSocket
             if (this.wsManager) {
                 this.wsManager.broadcastDeviceUpdate(deviceId, deviceData);
             }
@@ -368,6 +392,9 @@ class WebSocketManager {
         this.wss = new WebSocketServer({ server });
         this.connections = new Map(); // telegramId -> Set of WebSocket connections
         this.setupWebSocketServer();
+        this.updateQueue = new Map(); // deviceId -> data
+        this.batchTimeout = null;
+        this.BATCH_DELAY = 100; // 100ms
     }
 
     setupWebSocketServer() {
@@ -504,6 +531,48 @@ class WebSocketManager {
                 ws.send(notification);
             }
         });
+    }
+
+    // Вебсокет менеджер добавить батчинг обновлений
+    queueDeviceUpdate(deviceId, data) {
+        this.updateQueue.set(deviceId, data);
+        
+        if (!this.batchTimeout) {
+            this.batchTimeout = setTimeout(() => {
+                this.sendQueuedUpdates();
+            }, this.BATCH_DELAY);
+        }
+    }
+
+    sendQueuedUpdates() {
+        const updates = Array.from(this.updateQueue.entries())
+            .reduce((acc, [deviceId, data]) => {
+                acc[deviceId] = data;
+                return acc;
+            }, {});
+
+        this.connections.forEach((userConnections, telegramId) => {
+            const relevantUpdates = {};
+            for (const [deviceId, data] of Object.entries(updates)) {
+                if (this.userHasDevice(telegramId, deviceId)) {
+                    relevantUpdates[deviceId] = data;
+                }
+            }
+
+            if (Object.keys(relevantUpdates).length > 0) {
+                userConnections.forEach(ws => {
+                    if (ws.readyState === ws.OPEN) {
+                        ws.send(JSON.stringify({
+                            type: 'batch_update',
+                            updates: relevantUpdates
+                        }));
+                    }
+                });
+            }
+        });
+
+        this.updateQueue.clear();
+        this.batchTimeout = null;
     }
 }
 
@@ -760,6 +829,36 @@ app.post('/api/auth/unregister-device', requireAuth, validateDevice, requireDevi
     }
 });
 
+// 5.4 Новый endpoint для получения данных по нескольким устройствам
+app.post('/api/devices/batch-data', requireAuth, async (req, res) => {
+    const { device_ids } = req.body;
+    
+    if (!Array.isArray(device_ids)) {
+        return res.status(400).json({ error: 'Неверный формат запроса' });
+    }
+
+    const response = {};
+    const uncachedDevices = [];
+
+    // Сначала проверяем кеш
+    for (const deviceId of device_ids) {
+        const cachedData = mqttManager.cache.get(deviceId);
+        if (cachedData) {
+            response[deviceId] = cachedData;
+        } else {
+            uncachedDevices.push(deviceId);
+        }
+    }
+
+    // Загружаем данные для устройств, которых нет в кеше
+    for (const deviceId of uncachedDevices) {
+        if (await DeviceService.checkDeviceOwnership(req.telegramId, deviceId)) {
+            response[deviceId] = mqttManager.getLatestData(deviceId);
+        }
+    }
+
+    res.json(response);
+});
 
 // ============================================================================
 // ЗАПУСК СЕРВЕРА
