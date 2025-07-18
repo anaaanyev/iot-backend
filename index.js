@@ -43,7 +43,7 @@ const DEVICE_TYPES = {
         validation: {
             threshold: { min: 0, max: 40, type: "number" }
         },
-        uiPath: "/devices/climate/"
+        uiPath: "/devices/"
     },
     smartdim: {
         name: "Управление освещением",
